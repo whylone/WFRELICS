@@ -18,6 +18,9 @@ window.fetch = global.fetch = async () => ({ ok: true, status: 200, json: async 
 
 window.eval(read('js/calc.js'));
 window.eval(read('js/store.js'));
+// в браузере store.js и Alpine живут в одном window; в тесте Alpine require-ится
+// в Node-реалме, поэтому глобальный компонент spider() пробрасываем вручную.
+global.spider = window.spider;
 let Alpine = require('alpinejs'); Alpine = Alpine.default || Alpine;
 window.Alpine = Alpine; Alpine.start();
 

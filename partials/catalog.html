@@ -25,6 +25,13 @@
           :class="$store.wf.itemCat===c ? 'bg-txt text-ink border-txt' : 'bg-panel text-dim border-line hover:text-txt'"
           class="px-3 py-2 text-xs border" x-text="c==='all' ? $store.wf.t('all') : $store.wf.catName(c)"></button>
       </template>
+      <!-- массовый выбор показанных -->
+      <div class="flex gap-2 ml-auto">
+        <button @click="$store.wf.selectAllVisible()"
+          class="px-3 py-2 text-xs border border-haz/60 text-haz hover:bg-haz hover:text-bone transition-colors" x-text="'✓ '+$store.wf.t('select_all_visible')"></button>
+        <button @click="$store.wf.clearAllVisible()"
+          class="px-3 py-2 text-xs border border-line text-dim hover:text-txt transition-colors" x-text="'× '+$store.wf.t('clear_all_visible')"></button>
+      </div>
     </div>
 
     <!-- сетка предметов -->
@@ -45,6 +52,15 @@
             </div>
           </div>
           <div class="border-t border-line px-3 py-2 space-y-1.5 mt-auto">
+            <!-- мастер-галочка: выбрать сразу все детали предмета -->
+            <label class="flex items-center gap-2.5 cursor-pointer text-xs pb-1.5 mb-1 border-b border-line/60 group">
+              <input type="checkbox" :checked="$store.wf.allSel(it)"
+                :indeterminate="!$store.wf.allSel(it) && $store.wf.someSel(it)"
+                @change="$store.wf.toggleAll(it)"
+                class="appearance-none w-4 h-4 border border-line bg-ink checked:bg-haz checked:border-haz shrink-0 cursor-pointer" />
+              <span class="uppercase tracking-wide font-mono"
+                :class="$store.wf.allSel(it) ? 'text-haz' : 'text-dim group-hover:text-txt'" x-text="$store.wf.t('select_all')"></span>
+            </label>
             <template x-for="p in it.parts" :key="p.name">
               <label class="flex items-center gap-2.5 cursor-pointer text-sm group">
                 <input type="checkbox" :checked="$store.wf.isSel(p.name)" @change="$store.wf.toggle(p.name)"

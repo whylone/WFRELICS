@@ -37,7 +37,7 @@
 </head>
 <body x-data class="bg-ink text-txt font-sans selection:bg-haz selection:text-bone">
 
-  <!-- ============ ДЕКОР ORAXIA: паутина + паучок ============ -->
+  <!-- ============ ДЕКОР ORAXIA: паутина по углам ============ -->
   <div aria-hidden="true" class="fixed inset-0 -z-10 pointer-events-none overflow-hidden">
     <svg class="absolute -top-1 -left-1 w-40 h-40 md:w-52 md:h-52 text-haz" style="opacity:.13" viewBox="0 0 160 160" fill="none" stroke="currentColor" stroke-width="1">
       <path d="M0 0L160 0M0 0L150 60M0 0L113 113M0 0L60 150M0 0L0 160" />
@@ -51,47 +51,68 @@
       <path d="M104 0L96 34 73 73 34 96 0 104" />
       <path d="M150 0L140 50 106 106 50 140 0 150" />
     </svg>
-    <!-- паучок свисает на нити у правого края -->
-    <svg class="absolute top-24 right-6 md:right-12 w-6 text-haz" style="opacity:.45" viewBox="0 0 40 62" fill="currentColor" stroke="currentColor">
-      <line x1="20" y1="0" x2="20" y2="29" stroke-width="0.8" />
-      <circle cx="20" cy="33" r="3" stroke="none" />
-      <ellipse cx="20" cy="42" rx="5" ry="7.5" stroke="none" />
-      <g fill="none" stroke-width="1.3">
-        <path d="M16 37 L5 32 L1 37" /><path d="M16 42 L3 42 L0 48" /><path d="M16 47 L5 54 L2 60" />
-        <path d="M24 37 L35 32 L39 37" /><path d="M24 42 L37 42 L40 48" /><path d="M24 47 L35 54 L38 60" />
+  </div>
+
+  <!-- ============ ПЕРЕТАСКИВАЕМЫЙ ПАУЧОК на паутине (справа сверху) ============ -->
+  <div x-data="spider()" aria-hidden="true" class="fixed top-0 right-4 md:right-24 z-30 pointer-events-none">
+    <svg x-ref="svg" width="140" height="420" class="overflow-visible">
+      <!-- паутинка-якорь сверху -->
+      <g class="text-haz" stroke="currentColor" fill="none" style="opacity:.3">
+        <path :d="`M${ax-26} 1 L${ax} ${ay} L${ax+26} 1`" stroke-width="1" />
+        <path :d="`M${ax-14} 1 Q${ax} 12 ${ax+14} 1`" stroke-width="0.8" />
+      </g>
+      <!-- нить тянется за паучком -->
+      <line :x1="ax" :y1="ay" :x2="sx" :y2="sy" class="text-haz" stroke="currentColor" stroke-width="1" style="opacity:.55" />
+      <!-- паучок (хватается мышкой) -->
+      <g :transform="`translate(${sx},${sy})`" class="text-hot" fill="currentColor" stroke="currentColor"
+         style="pointer-events:auto; cursor:grab"
+         :style="dragging ? 'cursor:grabbing; pointer-events:auto' : 'cursor:grab; pointer-events:auto'"
+         @pointerdown="grab($event)">
+        <circle cx="40" cy="40" r="22" fill="transparent" stroke="none" /> <!-- зона захвата -->
+        <g fill="none" stroke-width="1.6">
+          <path d="M-4 0 L-16 -7 L-22 -1" /><path d="M-4 4 L-18 4 L-23 11" /><path d="M-4 8 L-16 16 L-21 23" />
+          <path d="M4 0 L16 -7 L22 -1" /><path d="M4 4 L18 4 L23 11" /><path d="M4 8 L16 16 L21 23" />
+        </g>
+        <circle cx="0" cy="-6" r="3.4" stroke="none" />
+        <ellipse cx="0" cy="4" rx="6" ry="9" stroke="none" />
+        <circle cx="-1.5" cy="-7" r="0.9" fill="#ece0cb" stroke="none" />
+        <circle cx="1.5" cy="-7" r="0.9" fill="#ece0cb" stroke="none" />
       </g>
     </svg>
   </div>
 
-  <!-- ============ ШАПКА ============ -->
-  <header class="sticky top-0 z-40 bg-ink/95 backdrop-blur border-b border-haz/40">
-    <div class="max-w-[1320px] mx-auto flex items-center flex-wrap px-4">
-      <span class="py-3 pr-5 font-extrabold text-lg tracking-tight">WF<span class="text-haz">RELICS</span></span>
+  <!-- ============ ШАПКА (центр. навигация + размытие) ============ -->
+  <header class="sticky top-0 z-40 bg-ink/70 backdrop-blur-xl border-b border-haz/40 shadow-[0_8px_24px_-12px_rgba(192,35,63,0.5)]">
+    <div class="max-w-[1320px] mx-auto grid grid-cols-[1fr_auto_1fr] items-center px-4 gap-2">
+      <!-- логотип слева -->
+      <span class="py-3 font-extrabold text-lg tracking-tight whitespace-nowrap">WF<span class="text-haz">RELICS</span></span>
 
-      <nav x-data="{ view: 'catalog' }" class="flex items-stretch">
-        <button hx-get="partials/catalog.html" hx-target="#main" hx-swap="innerHTML" @click="view='catalog'"
+      <!-- навигация по центру -->
+      <nav x-data="{ view: 'catalog' }" class="flex items-stretch justify-center">
+        <button hx-get="partials/catalog.html" hx-target="#main" hx-swap="innerHTML swap:0.18s" @click="view='catalog'"
           :class="view==='catalog' ? 'text-txt border-haz' : 'text-dim hover:text-txt border-transparent'"
-          class="px-4 py-3 text-sm border-b-2 transition-colors">
+          class="px-4 py-3 text-sm border-b-2 transition-colors whitespace-nowrap">
           <span class="font-mono text-xs text-haz/70">01</span> <span x-text="$store.wf.t('nav_catalog')"></span>
         </button>
-        <button hx-get="partials/relics.html" hx-target="#main" hx-swap="innerHTML" @click="view='relics'"
+        <button hx-get="partials/relics.html" hx-target="#main" hx-swap="innerHTML swap:0.18s" @click="view='relics'"
           :class="view==='relics' ? 'text-txt border-haz' : 'text-dim hover:text-txt border-transparent'"
-          class="px-4 py-3 text-sm border-b-2 transition-colors">
+          class="px-4 py-3 text-sm border-b-2 transition-colors whitespace-nowrap">
           <span class="font-mono text-xs text-haz/70">02</span> <span x-text="$store.wf.t('nav_relics')"></span>
         </button>
-        <button hx-get="partials/calc.html" hx-target="#main" hx-swap="innerHTML" @click="view='calc'"
+        <button hx-get="partials/calc.html" hx-target="#main" hx-swap="innerHTML swap:0.18s" @click="view='calc'"
           :class="view==='calc' ? 'text-txt border-haz' : 'text-dim hover:text-txt border-transparent'"
-          class="px-4 py-3 text-sm border-b-2 transition-colors">
+          class="px-4 py-3 text-sm border-b-2 transition-colors whitespace-nowrap">
           <span class="font-mono text-xs text-haz/70">03</span> <span x-text="$store.wf.t('nav_optimizer')"></span><span x-show="$store.wf.selCount" class="text-haz font-bold" x-text="' ('+$store.wf.selCount+')'"></span>
         </button>
       </nav>
 
-      <div class="ml-auto flex items-center gap-4 py-2">
-        <span class="hidden sm:flex items-center gap-2 text-xs text-dim">
+      <!-- статус/язык справа -->
+      <div class="flex items-center justify-end gap-4 py-2">
+        <span class="hidden lg:flex items-center gap-2 text-xs text-dim">
           <i class="led"></i>
           <span x-text="$store.wf.loaded ? ($store.wf.data.counts.items+' / '+$store.wf.data.counts.relics) : '…'"></span>
         </span>
-        <span class="hidden md:inline text-xs text-dim">
+        <span class="hidden md:inline text-xs text-dim whitespace-nowrap">
           <span x-text="$store.wf.t('selected')"></span>: <b :class="$store.wf.selCount ? 'text-haz' : 'text-dim'" x-text="$store.wf.selCount"></b>
         </span>
         <button data-lang-toggle @click="$store.wf.toggleLang()"
@@ -102,15 +123,18 @@
     </div>
   </header>
 
-  <!-- ============ КОНТЕНТ (htmx SPA) ============ -->
+  <!-- ============ КОНТЕНТ (htmx SPA, плавная подмена) ============ -->
   <main id="main" class="min-h-[60vh] px-4 md:px-6 py-7 max-w-[1320px] mx-auto w-full"
-        hx-get="partials/catalog.html" hx-trigger="load" hx-target="#main" hx-swap="innerHTML">
+        hx-get="partials/catalog.html" hx-trigger="load" hx-target="#main" hx-swap="innerHTML swap:0.18s">
     <div class="text-dim text-sm" x-text="$store.wf.t('loading')"></div>
   </main>
 
   <!-- ============ ПОДВАЛ ============ -->
-  <footer class="border-t border-haz/30 mt-14">
-    <div class="max-w-[1320px] mx-auto px-4 py-4 flex flex-wrap gap-x-6 gap-y-1 text-xs text-dim">
+  <footer class="relative border-t border-haz/30 mt-14 overflow-hidden">
+    <img src="media/oraxiafooter.png" alt="" aria-hidden="true"
+      class="pointer-events-none select-none absolute -right-4 bottom-0 h-36 md:h-44 opacity-20 object-contain
+             [mask-image:linear-gradient(to_left,black,transparent)]" />
+    <div class="relative max-w-[1320px] mx-auto px-4 py-6 flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-dim">
       <span class="font-bold text-txt">WF<span class="text-haz">RELICS</span></span>
       <span x-show="$store.wf.loaded" x-text="$store.wf.t('data_sync')+': '+(new Date($store.wf.data.generatedAt).toLocaleDateString())"></span>
       <span class="ml-auto">© Digital Extremes Ltd. — <span x-text="$store.wf.t('footer')"></span></span>

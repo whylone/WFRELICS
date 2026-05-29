@@ -10,9 +10,9 @@ body { background: #0d0a0b; }
 @keyframes led { 50% { opacity: 0.3; } }
 .led { display: inline-block; width: 7px; height: 7px; background: #e8455c; box-shadow: 0 0 7px #e8455c; animation: led 1.8s steps(2, jump-none) infinite; }
 
-/* Плавная подмена контента htmx. */
-#main { transition: opacity 0.12s ease; }
-#main.htmx-swapping { opacity: 0.4; }
+/* Плавная подмена вкладок htmx: затухание старого -> проявление нового. */
+#main { transition: opacity 0.18s ease, transform 0.18s ease; }
+#main.htmx-swapping { opacity: 0; transform: translateY(6px); }
 
 /* Скроллбары в тон. */
 ::-webkit-scrollbar { width: 10px; height: 10px; }

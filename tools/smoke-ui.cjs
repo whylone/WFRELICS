@@ -67,12 +67,32 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fail++;
   ok(ranked.length > 0, `ranked relics for selected part = ${ranked.length}`);
   ok(ranked.every((r) => r.hits.some((h) => h.item === part)), 'every ranked relic contains the part');
 
+  // select-all helpers
+  store.clearSel();
+  const itemA = primes.items[0];
+  store.toggleAll(itemA);
+  ok(itemA.parts.every((p) => store.isSel(p.name)), 'toggleAll selects every part of an item');
+  ok(store.allSel(itemA), 'allSel true after toggleAll');
+  store.toggleAll(itemA);
+  ok(!store.someSel(itemA), 'toggleAll again clears all parts');
+  store.selectAllVisible();
+  const totalParts = primes.items.reduce((s, it) => s + it.parts.length, 0);
+  ok(store.selCount === totalParts, `selectAllVisible selects all ${totalParts} parts`);
+  store.clearAllVisible();
+  ok(store.selCount === 0, 'clearAllVisible clears everything');
+  store.toggle(primes.items[0].parts[0].name); // вернём 1 для дальнейших проверок
+
+  // refinement зафиксирован на Intact (рефайн убран из UI)
+  ok(store.refinement === 'Intact', 'refinement fixed to Intact');
+
   // DOM: отрисованы карточки предметов
   await new Promise((r) => setTimeout(r, 100));
   const cards = window.document.querySelectorAll('#main article');
   ok(cards.length === primes.items.length, `DOM rendered ${cards.length} item cards`);
   const checks = window.document.querySelectorAll('#main input[type=checkbox]');
-  ok(checks.length > 0, `DOM rendered ${checks.length} part checkboxes`);
+  ok(checks.length > 0, `DOM rendered ${checks.length} checkboxes`);
+  const masters = [...window.document.querySelectorAll('#main label')].filter((l) => /All parts/i.test(l.textContent));
+  ok(masters.length === primes.items.length, `DOM rendered ${masters.length} "All parts" master toggles`);
 
   // заголовок виден после загрузки (по умолчанию EN)
   const h1 = window.document.querySelector('#main h1');

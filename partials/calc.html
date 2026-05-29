@@ -11,18 +11,8 @@
     </header>
 
     <!-- управление -->
-    <div class="flex flex-wrap gap-4 items-center">
-      <div class="flex items-center gap-2">
-        <span class="text-xs text-dim" x-text="$store.wf.t('refine')+':'"></span>
-        <div class="flex">
-          <template x-for="s in $store.wf.data.states" :key="s">
-            <button @click="$store.wf.refinement=s"
-              :class="$store.wf.refinement===s ? 'bg-haz text-bone border-haz' : 'bg-panel text-dim border-line hover:text-txt'"
-              class="px-3 py-1.5 text-xs border -ml-px first:ml-0" x-text="$store.wf.stateName(s)"></button>
-          </template>
-        </div>
-      </div>
-      <button x-show="$store.wf.selCount" @click="$store.wf.clearSel()"
+    <div class="flex flex-wrap gap-4 items-center" x-show="$store.wf.selCount">
+      <button @click="$store.wf.clearSel()"
         class="px-3 py-1.5 text-xs border border-line text-dim hover:text-haz hover:border-haz ml-auto" x-text="'× '+$store.wf.t('reset')"></button>
     </div>
 
