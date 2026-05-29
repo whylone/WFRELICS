@@ -32,6 +32,12 @@ function categoryOf(i) {
   return i.category; // Primary, Secondary, Melee, Archwing
 }
 
+// Источники, которые не нужны в планировщике фарма:
+//  - PvP (Conclave «Faceoff», Lunaro)
+//  - ограниченные по времени ивенты (Plague Star, Ghoul Purge) — доступны не всегда
+const EXCLUDE_LOCATION = /faceoff|conclave|lunaro|plague star|ghoul/i;
+function isExcludedLocation(raw) { return EXCLUDE_LOCATION.test(raw || ''); }
+
 function parseRelicName(name) {
   const parts = name.trim().split(/\s+/);
   let state = 'Intact';
@@ -104,6 +110,7 @@ async function main() {
     }
     for (const d of entry.drops || []) {
       if (!d.location) continue;
+      if (isExcludedLocation(d.location)) continue; // PvP / временные ивенты
       const prev = relic.missions.get(d.location);
       if (!prev || (d.chance ?? 0) > prev.chance) relic.missions.set(d.location, { ...parseLocation(d.location), chance: d.chance ?? 0 });
     }
