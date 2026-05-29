@@ -51,6 +51,10 @@
       <path d="M104 0L96 34 73 73 34 96 0 104" />
       <path d="M150 0L140 50 106 106 50 140 0 150" />
     </svg>
+    <!-- Oraxia: фоновая «фреска» справа снизу, растворяется в темноте -->
+    <img src="media/oraxiafooter.png" alt=""
+      class="hidden lg:block absolute bottom-0 right-0 h-[82vh] max-h-[860px] object-contain select-none"
+      style="opacity:.16; mask-image:linear-gradient(305deg, black 0%, black 22%, transparent 62%); -webkit-mask-image:linear-gradient(305deg, black 0%, black 22%, transparent 62%);" />
   </div>
 
   <!-- ============ ПЕРЕТАСКИВАЕМЫЙ ПАУЧОК на паутине (справа сверху) ============ -->
@@ -82,7 +86,7 @@
   </div>
 
   <!-- ============ ШАПКА (центр. навигация + размытие) ============ -->
-  <header class="sticky top-0 z-40 bg-ink/70 backdrop-blur-xl border-b border-line">
+  <header class="sticky top-0 z-40 bg-ink/95 backdrop-blur-md border-b border-line">
     <div class="max-w-[1320px] mx-auto grid grid-cols-[1fr_auto_1fr] items-center px-4 gap-2">
       <!-- логотип слева -->
       <span class="py-3 font-extrabold text-lg tracking-tight whitespace-nowrap">WF<span class="text-haz">RELICS</span></span>
