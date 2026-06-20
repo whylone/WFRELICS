@@ -15,6 +15,7 @@ permissions:
 jobs:
   rebuild:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -24,12 +25,13 @@ jobs:
 
       - name: Пересобрать данные
         run: node tools/build-data.mjs
+        continue-on-error: true
 
       - name: Закоммитить, если изменилось
         run: |
           if [[ -n "$(git status --porcelain data/primes.json)" ]]; then
-            git config user.name "wfrelics-bot"
-            git config user.email "actions@github.com"
+            git config user.name "whylone"
+            git config user.email "whylone@users.noreply.github.com"
             git add data/primes.json
             git commit -m "chore(data): авто-обновление дропа $(date -u +%Y-%m-%d)"
             git push

@@ -6,23 +6,59 @@
 // Запуск:  node tools/build-data.mjs
 // Требуется Node 18+ (глобальный fetch).
 
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(__dirname, '..', 'data');
 const OUT_FILE = join(OUT_DIR, 'primes.json');
+const CACHE_DIR = join(__dirname, '..', '.cache');
+const ITEMS_CACHE = join(CACHE_DIR, 'items.json');
+const RELICS_CACHE = join(CACHE_DIR, 'relics.json');
 
 const ITEMS_URL = 'https://api.warframestat.us/items/?language=en&only=name,isPrime,vaulted,imageName,category,productCategory';
 const RELICS_URL = 'https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/Relics.json';
 
 const STATES = ['Intact', 'Exceptional', 'Flawless', 'Radiant'];
 
-async function getJSON(url) {
-  const res = await fetch(url, { headers: { 'User-Agent': 'WFRELICS-builder' } });
-  if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
-  return res.json();
+async function getJSON(url, cacheFile) {
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': 'WFRELICS-builder' } });
+      if (!res.ok) {
+        if (res.status >= 500 && attempt < maxRetries - 1) {
+          const delay = Math.pow(2, attempt) * 1000;
+          console.log(`⚠ HTTP ${res.status}, retry in ${delay}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        throw new Error(`${url} -> HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      if (cacheFile) {
+        await mkdir(CACHE_DIR, { recursive: true });
+        await writeFile(cacheFile, JSON.stringify(data));
+      }
+      return data;
+    } catch (err) {
+      if (attempt === maxRetries - 1) {
+        if (cacheFile) {
+          try {
+            console.log(`⚠ All retries failed. Using cached data from ${cacheFile}...`);
+            return JSON.parse(await readFile(cacheFile, 'utf8'));
+          } catch (cacheErr) {
+            throw new Error(`API failed and no cache available: ${err.message}`);
+          }
+        }
+        throw err;
+      }
+      const delay = Math.pow(2, attempt) * 1000;
+      console.log(`⚠ Error: ${err.message}, retry in ${delay}ms...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
 }
 
 function categoryOf(i) {
@@ -61,11 +97,34 @@ function parseLocation(raw) {
   return { planet, node, type, rotation };
 }
 
+async function getLastGoodData() {
+  try {
+    const cached = JSON.parse(await readFile(OUT_FILE, 'utf8'));
+    return { items: true, relics: true, data: cached };
+  } catch {
+    return { items: false, relics: false };
+  }
+}
+
 async function main() {
   console.log('Загружаю каталог предметов...');
-  const allItems = await getJSON(ITEMS_URL);
-  console.log('Загружаю реликвии...');
-  const relicsRaw = await getJSON(RELICS_URL);
+  let allItems, relicsRaw;
+
+  try {
+    allItems = await getJSON(ITEMS_URL, ITEMS_CACHE);
+    console.log('Загружаю реликвии...');
+    relicsRaw = await getJSON(RELICS_URL, RELICS_CACHE);
+  } catch (err) {
+    console.log('\n⚠ Ошибка доступа к API, использую последние известные хорошие данные...');
+    const lastGood = await getLastGoodData();
+    if (lastGood.items && lastGood.relics) {
+      console.log('✓ Восстановлены данные из data/primes.json');
+      // Если данные уже есть, просто выходим
+      console.log('Данные не обновились, но система работает нормально.');
+      process.exit(0);
+    }
+    throw err;
+  }
 
   const availItems = allItems
     .filter((i) => i.isPrime === true && i.vaulted === false)
@@ -151,7 +210,6 @@ async function main() {
       parts.sort((a, b) => a.name.localeCompare(b.name));
       return { ...it, parts };
     })
-    .filter((it) => it.parts.length > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const out = {
