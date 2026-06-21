@@ -18,6 +18,9 @@ import { dirname, join } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(__dirname, '..', 'data');
 const OUT_FILE = join(OUT_DIR, 'primes.json');
+// Коммитимый запас категорий: последняя известная категория каждого предмета.
+// Нужен, если warframestat недоступен в момент сборки (в CI локального кэша нет).
+const CAT_FILE = join(OUT_DIR, 'categories.json');
 const CACHE_DIR = join(__dirname, '..', '.cache');
 const HTML_CACHE = join(CACHE_DIR, 'droptable.html');
 const ITEMS_CACHE = join(CACHE_DIR, 'items.json');
@@ -180,11 +183,17 @@ async function main() {
   console.log('Загружаю официальный droptable Digital Extremes...');
   const html = await fetchWithRetry(DROPTABLE_URL, { cacheFile: HTML_CACHE });
 
-  // Категории оружия — best-effort из warframestat (с кэшем). Не критично для сборки.
-  // catMap: по точному имени прайма; baseCatMap: по базовому оружию (для новых праймов,
-  // которые warframestat ещё не добавил — у него уже есть базовая версия).
+  // Категории оружия — best-effort из warframestat. Несколько источников по надёжности:
+  //  catMap     — по точному имени прайма (warframestat, если уже добавил прайм);
+  //  baseCatMap — по базовому оружию (для новых праймов: базовая версия есть давно);
+  //  savedCat   — коммитнутый запас прошлой удачной сборки (страховка, если API лежит).
   const catMap = new Map();
   const baseCatMap = new Map();
+  const savedCat = new Map();
+  try {
+    const saved = JSON.parse(await readFile(CAT_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(saved)) savedCat.set(k, v);
+  } catch { /* запаса ещё нет — не страшно */ }
   try {
     console.log('Загружаю категории из warframestat (обогащение)...');
     const items = await fetchWithRetry(ITEMS_URL, { json: true, cacheFile: ITEMS_CACHE });
@@ -194,7 +203,7 @@ async function main() {
       else baseCatMap.set(i.name, cat);
     }
   } catch (e) {
-    console.log(`⚠ Категории недоступны (${e.message}) — новое оружие может быть без точной категории.`);
+    console.log(`⚠ warframestat недоступен (${e.message}) — категории беру из коммитнутого запаса.`);
   }
 
   const relicContents = parseRelicContents(html);
@@ -242,7 +251,9 @@ async function main() {
     parts.sort((a, b) => a.name.localeCompare(b.name));
     const isFrame = parts.some((p) => FRAME_PART.test(p.short));
     const baseName = name.replace(/ Prime$/, '');
-    const category = isFrame ? 'Warframe' : (catMap.get(name) || baseCatMap.get(baseName) || null);
+    const category = isFrame
+      ? 'Warframe'
+      : (catMap.get(name) || baseCatMap.get(baseName) || savedCat.get(name) || null);
     return { name, image: `${name.replace(/\s+/g, '')}.png`, category, parts };
   })
     .filter((it) => it.parts.length > 0)
@@ -264,6 +275,13 @@ async function main() {
 
   await mkdir(OUT_DIR, { recursive: true });
   await writeFile(OUT_FILE, JSON.stringify(out));
+
+  // Обновляем коммитнутый запас категорий: запоминаем то, что определилось,
+  // плюс сохраняем прежние записи (чтобы запас не худел при разовом сбое API).
+  const cats = Object.fromEntries(savedCat);
+  for (const it of items) if (it.category) cats[it.name] = it.category;
+  await writeFile(CAT_FILE, JSON.stringify(cats, null, 2) + '\n');
+
   const totalMissions = relics.reduce((s, r) => s + r.missions.length, 0);
   console.log(`\nГотово: ${OUT_FILE} (${(JSON.stringify(out).length / 1024).toFixed(1)} KB)`);
   console.log(`Предметы: ${out.counts.items} | реликвии: ${out.counts.relics} | детали: ${out.counts.parts} | источников: ${totalMissions}`);

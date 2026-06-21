@@ -23,16 +23,17 @@ jobs:
         with:
           node-version: 20
 
+      # Сборка сама прерывается, если данных подозрительно мало (защита от мусора),
+      # поэтому continue-on-error не нужен — реальный сбой будет виден красным прогоном.
       - name: Пересобрать данные
         run: node tools/build-data.mjs
-        continue-on-error: true
 
       - name: Закоммитить, если изменилось
         run: |
-          if [[ -n "$(git status --porcelain data/primes.json)" ]]; then
+          if [[ -n "$(git status --porcelain data/primes.json data/categories.json)" ]]; then
             git config user.name "whylone"
             git config user.email "whylone@users.noreply.github.com"
-            git add data/primes.json
+            git add data/primes.json data/categories.json
             git commit -m "chore(data): авто-обновление дропа $(date -u +%Y-%m-%d)"
             git push
           else
