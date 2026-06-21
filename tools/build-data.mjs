@@ -1,7 +1,12 @@
 // Сборщик данных для WFRELICS.
-// Собирает ВСЕ актуальные (не ваултнутые) прайм-предметы всех категорий и
-// доступные реликвии — с наградами, шансами по рефайнам и ВСЕМИ источниками-миссиями.
-// Данные на английском (как в API). Пишет data/primes.json (грузится сайтом «вживую»).
+// ИСТОЧНИК ИСТИНЫ — официальный droptable Digital Extremes (warframe.com/droptables).
+// Это тот же источник, что у вики: он обновляется в день патча, поэтому новые
+// праймы и ротации волта появляются на сайте сразу, без задержки community-зеркал.
+//
+// Из droptable берём: содержимое реликвий, шансы по рефайнам, ранги наград,
+// доступность (реликвия доступна, если реально падает в миссии/бонусе) и все локации.
+// warframestat нужен только для категории оружия (Primary/Secondary/Melee/...),
+// и используется как best-effort обогащение с кэшем — если упадёт, сборка не ломается.
 //
 // Запуск:  node tools/build-data.mjs
 // Требуется Node 18+ (глобальный fetch).
@@ -14,208 +19,244 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(__dirname, '..', 'data');
 const OUT_FILE = join(OUT_DIR, 'primes.json');
 const CACHE_DIR = join(__dirname, '..', '.cache');
+const HTML_CACHE = join(CACHE_DIR, 'droptable.html');
 const ITEMS_CACHE = join(CACHE_DIR, 'items.json');
-const RELICS_CACHE = join(CACHE_DIR, 'relics.json');
 
-const ITEMS_URL = 'https://api.warframestat.us/items/?language=en&only=name,isPrime,vaulted,imageName,category,productCategory';
-const RELICS_URL = 'https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/Relics.json';
+const DROPTABLE_URL = 'https://www.warframe.com/droptables';
+const ITEMS_URL = 'https://api.warframestat.us/items/?language=en&only=name,isPrime,category,productCategory';
 
 const STATES = ['Intact', 'Exceptional', 'Flawless', 'Radiant'];
+const CDN = 'https://cdn.warframestat.us/img/';
 
-async function getJSON(url, cacheFile) {
-  const maxRetries = 3;
+// Источники, не нужные в планировщике фарма: PvP и ограниченные по времени ивенты.
+const EXCLUDE_LOCATION = /faceoff|conclave|lunaro|plague star|ghoul|hemocyte/i;
+
+// --- сетевой слой: retry + экспоненциальный backoff + fallback на кэш ---
+async function fetchWithRetry(url, { json, cacheFile, maxRetries = 3 } = {}) {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      const res = await fetch(url, { headers: { 'User-Agent': 'WFRELICS-builder' } });
+      const res = await fetch(url, { headers: { 'User-Agent': 'WFRELICS-builder' }, redirect: 'follow' });
       if (!res.ok) {
         if (res.status >= 500 && attempt < maxRetries - 1) {
-          const delay = Math.pow(2, attempt) * 1000;
-          console.log(`⚠ HTTP ${res.status}, retry in ${delay}ms...`);
-          await new Promise(r => setTimeout(r, delay));
+          const delay = 2 ** attempt * 1000;
+          console.log(`⚠ HTTP ${res.status}, повтор через ${delay}ms...`);
+          await new Promise((r) => setTimeout(r, delay));
           continue;
         }
         throw new Error(`${url} -> HTTP ${res.status}`);
       }
-      const data = await res.json();
+      const text = await res.text();
       if (cacheFile) {
         await mkdir(CACHE_DIR, { recursive: true });
-        await writeFile(cacheFile, JSON.stringify(data));
+        await writeFile(cacheFile, text);
       }
-      return data;
+      return json ? JSON.parse(text) : text;
     } catch (err) {
       if (attempt === maxRetries - 1) {
         if (cacheFile) {
           try {
-            console.log(`⚠ All retries failed. Using cached data from ${cacheFile}...`);
-            return JSON.parse(await readFile(cacheFile, 'utf8'));
-          } catch (cacheErr) {
-            throw new Error(`API failed and no cache available: ${err.message}`);
-          }
+            console.log(`⚠ Все попытки не удались. Беру кэш ${cacheFile}...`);
+            const text = await readFile(cacheFile, 'utf8');
+            return json ? JSON.parse(text) : text;
+          } catch { /* кэша нет — пробрасываем исходную ошибку */ }
         }
         throw err;
       }
-      const delay = Math.pow(2, attempt) * 1000;
-      console.log(`⚠ Error: ${err.message}, retry in ${delay}ms...`);
-      await new Promise(r => setTimeout(r, delay));
+      const delay = 2 ** attempt * 1000;
+      console.log(`⚠ Ошибка: ${err.message}, повтор через ${delay}ms...`);
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
 }
 
-function categoryOf(i) {
+// --- разбор предмета/прайма ---
+// owner: "Akbronco Prime Link" -> "Akbronco Prime"; "Dual Zoren Prime Blade" -> "Dual Zoren Prime"
+function ownerOf(name) {
+  const i = name.indexOf(' Prime');
+  if (i < 0) return null;
+  return name.slice(0, i + ' Prime'.length);
+}
+function shortPart(name, owner) {
+  const rest = name.slice(owner.length).trim();
+  return rest === '' ? 'Set' : rest;
+}
+const FRAME_PART = /^(Neuroptics|Chassis|Systems) Blueprint$/;
+
+function categoryFromWarframestat(i) {
   if (i.productCategory === 'SentinelWeapons') return 'SentinelWeapon';
   if (i.category === 'Warframes') return 'Warframe';
   if (i.category === 'Sentinels') return 'Sentinel';
   return i.category; // Primary, Secondary, Melee, Archwing
 }
 
-// Источники, которые не нужны в планировщике фарма:
-//  - PvP (Conclave «Faceoff», Lunaro)
-//  - ограниченные по времени ивенты (Plague Star, Ghoul Purge) — доступны не всегда
-const EXCLUDE_LOCATION = /faceoff|conclave|lunaro|plague star|ghoul/i;
-function isExcludedLocation(raw) { return EXCLUDE_LOCATION.test(raw || ''); }
-
-function parseRelicName(name) {
-  const parts = name.trim().split(/\s+/);
-  let state = 'Intact';
-  if (STATES.includes(parts[parts.length - 1])) state = parts.pop();
-  return { id: `${parts[0]} ${parts.slice(1).join(' ')}`, tier: parts[0], code: parts.slice(1).join(' '), state };
-}
-
-// "Veil Proxima/Sabmir Cloud (Skirmish), Rotation B" -> {planet, node, type, rotation}
-function parseLocation(raw) {
-  let s = raw;
-  let rotation = null;
-  const rm = s.match(/,\s*Rotation\s+([A-Za-z0-9]+)\s*$/i);
-  if (rm) { rotation = rm[1]; s = s.slice(0, rm.index); }
-  let planet = null, place = s.trim();
-  const slash = s.indexOf('/');
-  if (slash >= 0) { planet = s.slice(0, slash).trim(); place = s.slice(slash + 1).trim(); }
+// "Mercury/Apollodorus (Survival)" -> {planet, node, type}
+function parseHeader(h) {
+  let planet = null, place = h.trim();
+  const slash = place.indexOf('/');
+  if (slash >= 0) { planet = place.slice(0, slash).trim(); place = place.slice(slash + 1).trim(); }
   let type = null, node = place;
   const tm = place.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
   if (tm) { node = tm[1].trim(); type = tm[2].trim(); }
-  if (planet && planet.includes(',')) { const ps = planet.split(',').map((x) => x.trim()); planet = ps.pop(); node = (ps.join(', ') + (node ? ' ' + node : '')).trim(); }
-  return { planet, node, type, rotation };
+  return { planet, node, type };
 }
 
-async function getLastGoodData() {
-  try {
-    const cached = JSON.parse(await readFile(OUT_FILE, 'utf8'));
-    return { items: true, relics: true, data: cached };
-  } catch {
-    return { items: false, relics: false };
+function sectionBetween(html, startId, endId) {
+  const s = html.indexOf(`id="${startId}"`);
+  if (s < 0) return '';
+  const e = endId ? html.indexOf(`id="${endId}"`, s + 1) : html.length;
+  return html.slice(s, e < 0 ? html.length : e);
+}
+
+// Содержимое реликвий: relicId -> { tier, code, rewards: Map(item -> {item, rarity, chances}) }
+function parseRelicContents(html) {
+  const sec = sectionBetween(html, 'relicRewards', 'keyRewards');
+  const map = new Map();
+  const blockRe = /<th colspan="2">([A-Za-z]+) ([A-Za-z]?\d+) Relic \((Intact|Exceptional|Flawless|Radiant)\)<\/th>(.*?)(?=<tr class="blank-row"|<th colspan)/gs;
+  let m;
+  while ((m = blockRe.exec(sec)) !== null) {
+    const [, tier, code, state, body] = m;
+    const id = `${tier} ${code}`;
+    let relic = map.get(id);
+    if (!relic) { relic = { tier, code, rewards: new Map() }; map.set(id, relic); }
+    const rowRe = /<td>([^<]+)<\/td><td>([A-Za-z]+) \(([\d.]+)%\)<\/td>/g;
+    let r;
+    while ((r = rowRe.exec(body)) !== null) {
+      const item = r[1].trim();
+      const rarity = r[2];
+      const chance = parseFloat(r[3]);
+      let rw = relic.rewards.get(item);
+      if (!rw) { rw = { item, rarity, chances: {} }; relic.rewards.set(item, rw); }
+      rw.chances[state] = chance;
+    }
   }
+  return map;
+}
+
+// Где какие реликвии падают: relicId -> Map(locKey -> {planet,node,type,rotation,chance})
+// Источник доступности: реликвия доступна, если встречается в миссиях/бонусах.
+function parseRelicDrops(html) {
+  // Все секции-источники дропа, кроме relicRewards (там в строках — детали, а не реликвии).
+  const slices = [
+    sectionBetween(html, 'missionRewards', 'relicRewards'),
+    sectionBetween(html, 'keyRewards', 'modByAvatar'),
+  ].join('');
+  const drops = new Map();
+  const rowRe = /<tr[^>]*>(.*?)<\/tr>/gs;
+  let loc = null, rot = null, m;
+  while ((m = rowRe.exec(slices)) !== null) {
+    const row = m[1];
+    const th = row.match(/<th[^>]*>(.*?)<\/th>/);
+    if (th) {
+      const t = th[1].trim();
+      // Заголовки бонусов со стадиями идут в строке с pad-cell — это подзаголовок-стадия,
+      // её игнорируем, сохраняя регион (loc) и ротацию A/B/C (как в прежних данных).
+      const isStage = /pad-cell/.test(row);
+      if (/^Rotation\b/i.test(t)) rot = t.replace(/^Rotation\s+/i, '');
+      else if (isStage) { /* стадия бонуса — пропускаем */ }
+      else { loc = t; rot = null; }
+      continue;
+    }
+    if (!loc) continue;
+    // Непустые ячейки строки: для миссий их 2 (награда, шанс), для бонусов 3 (pad, награда, шанс).
+    const cells = [...row.matchAll(/<td[^>]*>([^<]*)<\/td>/g)].map((c) => c[1].trim()).filter(Boolean);
+    if (cells.length < 2) continue;
+    const rm = cells[0].match(/^([A-Za-z]+) ([A-Za-z]?\d+) Relic$/);
+    if (!rm) continue;
+    if (EXCLUDE_LOCATION.test(loc)) continue;
+    const id = `${rm[1]} ${rm[2]}`;
+    const chanceM = cells[1].match(/([\d.]+)%/);
+    const chance = chanceM ? parseFloat(chanceM[1]) : 0;
+    const { planet, node, type } = parseHeader(loc);
+    const locKey = `${loc}|${rot ?? ''}`;
+    let byLoc = drops.get(id);
+    if (!byLoc) { byLoc = new Map(); drops.set(id, byLoc); }
+    const prev = byLoc.get(locKey);
+    if (!prev || chance > prev.chance) byLoc.set(locKey, { planet, node, type, rotation: rot, chance });
+  }
+  return drops;
 }
 
 async function main() {
-  console.log('Загружаю каталог предметов...');
-  let allItems, relicsRaw;
+  console.log('Загружаю официальный droptable Digital Extremes...');
+  const html = await fetchWithRetry(DROPTABLE_URL, { cacheFile: HTML_CACHE });
 
+  // Категории оружия — best-effort из warframestat (с кэшем). Не критично для сборки.
+  // catMap: по точному имени прайма; baseCatMap: по базовому оружию (для новых праймов,
+  // которые warframestat ещё не добавил — у него уже есть базовая версия).
+  const catMap = new Map();
+  const baseCatMap = new Map();
   try {
-    allItems = await getJSON(ITEMS_URL, ITEMS_CACHE);
-    console.log('Загружаю реликвии...');
-    relicsRaw = await getJSON(RELICS_URL, RELICS_CACHE);
-  } catch (err) {
-    console.log('\n⚠ Ошибка доступа к API, использую последние известные хорошие данные...');
-    const lastGood = await getLastGoodData();
-    if (lastGood.items && lastGood.relics) {
-      console.log('✓ Восстановлены данные из data/primes.json');
-      // Если данные уже есть, просто выходим
-      console.log('Данные не обновились, но система работает нормально.');
-      process.exit(0);
+    console.log('Загружаю категории из warframestat (обогащение)...');
+    const items = await fetchWithRetry(ITEMS_URL, { json: true, cacheFile: ITEMS_CACHE });
+    for (const i of items) {
+      const cat = categoryFromWarframestat(i);
+      if (i.isPrime) catMap.set(i.name, cat);
+      else baseCatMap.set(i.name, cat);
     }
-    throw err;
+  } catch (e) {
+    console.log(`⚠ Категории недоступны (${e.message}) — новое оружие может быть без точной категории.`);
   }
 
-  const availItems = allItems
-    .filter((i) => i.isPrime === true && i.vaulted === false)
-    .map((i) => ({ name: i.name, image: i.imageName || null, category: categoryOf(i) }));
-  const allPrimeNames = allItems.filter((i) => i.isPrime).map((i) => i.name).sort((a, b) => b.length - a.length);
-  const availNames = new Set(availItems.map((i) => i.name));
+  const relicContents = parseRelicContents(html);
+  const relicDrops = parseRelicDrops(html);
+  console.log(`Реликвий с содержимым: ${relicContents.size} | падающих в миссиях: ${relicDrops.size}`);
 
-  function ownerOf(partName) {
-    for (const n of allPrimeNames) if (partName === n || partName.startsWith(n + ' ')) return n;
-    return null;
-  }
-  function shortPart(partName) {
-    const owner = ownerOf(partName);
-    if (!owner) return partName;
-    return partName === owner ? 'Set' : partName.slice(owner.length + 1);
-  }
-
-  // редкость по рангу шанса (поле rarity в данных ненадёжно)
-  const baseChance = (rw) => rw.chances.Intact ?? rw.chances.Radiant ?? 0;
-  function assignRarities(rewards) {
-    [...rewards].sort((a, b) => baseChance(b) - baseChance(a)).forEach((rw, i) => {
-      rw.rarity = i < 3 ? 'Common' : i < 5 ? 'Uncommon' : 'Rare';
-    });
-  }
-
-  // группируем не ваултнутые реликвии
-  const relicMap = new Map();
-  for (const entry of relicsRaw) {
-    if (entry.vaulted !== false || !entry.name) continue;
-    const { id, tier, code, state } = parseRelicName(entry.name);
-    if (!STATES.includes(state)) continue;
-    let relic = relicMap.get(id);
-    if (!relic) { relic = { id, tier, code, images: {}, rewards: new Map(), missions: new Map() }; relicMap.set(id, relic); }
-    if (entry.imageName) relic.images[state] = entry.imageName;
-    for (const r of entry.rewards || []) {
-      const itemName = r.item?.name;
-      if (!itemName) continue;
-      let rw = relic.rewards.get(itemName);
-      if (!rw) rw = { item: itemName, chances: {} };
-      rw.chances[state] = r.chance;
-      relic.rewards.set(itemName, rw);
-    }
-    for (const d of entry.drops || []) {
-      if (!d.location) continue;
-      if (isExcludedLocation(d.location)) continue; // PvP / временные ивенты
-      const prev = relic.missions.get(d.location);
-      if (!prev || (d.chance ?? 0) > prev.chance) relic.missions.set(d.location, { ...parseLocation(d.location), chance: d.chance ?? 0 });
-    }
-  }
-
-  const relics = [];
-  const partDrops = new Map();
   const order = { Rare: 0, Uncommon: 1, Common: 2 };
-  for (const relic of [...relicMap.values()].sort((a, b) => a.id.localeCompare(b.id))) {
-    const rewards = [...relic.rewards.values()];
-    assignRarities(rewards);
+  const relics = [];
+  const partDrops = new Map();        // partName -> [{relic, tier, rarity, chances}]
+  const availOwners = new Set();       // праймы, чьи детали реально доступны
+
+  // Реликвия попадает на сайт, только если реально падает (есть в relicDrops).
+  for (const [id, content] of [...relicContents].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const byLoc = relicDrops.get(id);
+    if (!byLoc) continue; // ваултнутая — пропускаем
+    const rewards = [...content.rewards.values()];
+    rewards.sort((a, b) => order[a.rarity] - order[b.rarity] || a.item.localeCompare(b.item));
+
     for (const rw of rewards) {
       const owner = ownerOf(rw.item);
-      rw.available = Boolean(owner) && availNames.has(owner);
-      if (rw.available) {
+      rw.available = Boolean(owner);
+      if (owner) {
+        availOwners.add(owner);
         const list = partDrops.get(rw.item) || [];
-        list.push({ relic: relic.id, tier: relic.tier, rarity: rw.rarity, chances: rw.chances });
+        list.push({ relic: id, tier: content.tier, rarity: rw.rarity, chances: rw.chances });
         partDrops.set(rw.item, list);
       }
     }
-    rewards.sort((a, b) => order[a.rarity] - order[b.rarity] || a.item.localeCompare(b.item));
-    // ВСЕ источники-миссии (по убыванию шанса) — полный список фарма
-    const missions = [...relic.missions.values()].sort((a, b) => b.chance - a.chance);
+
+    const missions = [...byLoc.values()].sort((a, b) => b.chance - a.chance);
     relics.push({
-      id: relic.id, tier: relic.tier, code: relic.code,
-      image: relic.images.Intact || Object.values(relic.images)[0] || null,
+      id, tier: content.tier, code: content.code,
+      image: `Relic${content.tier}D.png`,
       rewards: rewards.map((rw) => ({ item: rw.item, rarity: rw.rarity, available: rw.available, chances: rw.chances })),
       missions,
     });
   }
 
-  const items = availItems
-    .map((it) => {
-      const parts = [];
-      for (const [partName, drops] of partDrops) {
-        if (ownerOf(partName) === it.name) parts.push({ name: partName, short: shortPart(partName), drops });
-      }
-      parts.sort((a, b) => a.name.localeCompare(b.name));
-      return { ...it, parts };
-    })
+  // Собираем предметы из доступных праймов.
+  const items = [...availOwners].map((name) => {
+    const parts = [];
+    for (const [partName, drops] of partDrops) {
+      if (ownerOf(partName) === name) parts.push({ name: partName, short: shortPart(partName, name), drops });
+    }
+    parts.sort((a, b) => a.name.localeCompare(b.name));
+    const isFrame = parts.some((p) => FRAME_PART.test(p.short));
+    const baseName = name.replace(/ Prime$/, '');
+    const category = isFrame ? 'Warframe' : (catMap.get(name) || baseCatMap.get(baseName) || null);
+    return { name, image: `${name.replace(/\s+/g, '')}.png`, category, parts };
+  })
+    .filter((it) => it.parts.length > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Защита: если парсинг дал явно мусорный результат — не перезаписываем живые данные.
+  if (relics.length < 20 || items.length < 8) {
+    throw new Error(`Подозрительно мало данных (реликвий ${relics.length}, предметов ${items.length}) — прерываю, чтобы не сломать сайт.`);
+  }
 
   const out = {
     generatedAt: new Date().toISOString(),
     states: STATES,
-    cdn: 'https://cdn.warframestat.us/img/',
+    cdn: CDN,
     counts: { items: items.length, relics: relics.length, parts: partDrops.size },
     items,
     relics,
@@ -225,10 +266,10 @@ async function main() {
   await writeFile(OUT_FILE, JSON.stringify(out));
   const totalMissions = relics.reduce((s, r) => s + r.missions.length, 0);
   console.log(`\nГотово: ${OUT_FILE} (${(JSON.stringify(out).length / 1024).toFixed(1)} KB)`);
-  const byCat = {};
-  for (const it of items) byCat[it.category] = (byCat[it.category] || 0) + 1;
   console.log(`Предметы: ${out.counts.items} | реликвии: ${out.counts.relics} | детали: ${out.counts.parts} | источников: ${totalMissions}`);
+  const byCat = {};
+  for (const it of items) byCat[it.category || 'unknown'] = (byCat[it.category || 'unknown'] || 0) + 1;
   console.log('По категориям:', JSON.stringify(byCat));
 }
 
-main().catch((err) => { console.error('Ошибка сборки:', err); process.exit(1); });
+main().catch((err) => { console.error('Ошибка сборки:', err.message); process.exit(1); });
